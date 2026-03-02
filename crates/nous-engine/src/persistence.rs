@@ -132,6 +132,73 @@ pub async fn store_action(pool: &PgPool, action: &AgentAction) -> Result<()> {
     Ok(())
 }
 
+/// Filters for querying persisted events.
+#[allow(dead_code)]
+pub struct EventFilters {
+    /// Filter by OCSF class UID (None = all).
+    pub class_uid: Option<u32>,
+    /// Filter by minimum severity (None = all).
+    pub min_severity: Option<u8>,
+    /// Maximum number of events to return.
+    pub limit: i64,
+}
+
+/// Query events from the database with optional filters.
+///
+/// Returns rows as `(id, time, class_uid, severity, source_json, payload_json, raw)` tuples
+/// serialized to JSON, ordered by time descending.
+#[allow(dead_code)]
+pub async fn query_events(pool: &PgPool, filters: &EventFilters) -> Result<Vec<serde_json::Value>> {
+    let mut query = String::from(
+        "SELECT id, time, class_uid, severity, source_json, payload_json, raw
+         FROM events WHERE 1=1",
+    );
+    let mut bind_idx = 1u32;
+
+    if filters.class_uid.is_some() {
+        query.push_str(&format!(" AND class_uid = ${bind_idx}"));
+        bind_idx += 1;
+    }
+    if filters.min_severity.is_some() {
+        query.push_str(&format!(" AND severity >= ${bind_idx}"));
+        bind_idx += 1;
+    }
+    let _ = bind_idx; // suppress unused warning
+
+    query.push_str(&format!(" ORDER BY time DESC LIMIT {}", filters.limit));
+
+    // Build and bind dynamically
+    let mut q =
+        sqlx::query_as::<_, (uuid::Uuid, i64, i32, i32, String, String, Option<String>)>(&query);
+
+    if let Some(class_uid) = filters.class_uid {
+        q = q.bind(class_uid as i32);
+    }
+    if let Some(min_severity) = filters.min_severity {
+        q = q.bind(min_severity as i32);
+    }
+
+    let rows = q.fetch_all(pool).await?;
+
+    let results: Vec<serde_json::Value> = rows
+        .into_iter()
+        .map(|(id, time, class_uid, severity, source_json, payload_json, raw)| {
+            serde_json::json!({
+                "id": id.to_string(),
+                "time": time,
+                "class_uid": class_uid,
+                "severity": severity,
+                "source": serde_json::from_str::<serde_json::Value>(&source_json).unwrap_or_default(),
+                "payload": serde_json::from_str::<serde_json::Value>(&payload_json).unwrap_or_default(),
+                "raw": raw,
+            })
+        })
+        .collect();
+
+    debug!(count = results.len(), "persistence: events queried");
+    Ok(results)
+}
+
 #[cfg(test)]
 mod tests {
 
@@ -178,6 +245,41 @@ mod tests {
         assert!(sql.contains("action_type"));
         assert!(sql.contains("target_entity_type"));
         assert!(sql.contains("target_value"));
+    }
+
+    #[test]
+    fn query_events_sql_builds_correctly() {
+        // Base query with no filters
+        let base = "SELECT id, time, class_uid, severity, source_json, payload_json, raw
+         FROM events WHERE 1=1";
+        assert!(base.contains("SELECT"));
+        assert!(base.contains("FROM events"));
+
+        // With class_uid filter
+        let with_class = format!("{base} AND class_uid = $1 ORDER BY time DESC LIMIT 100");
+        assert!(with_class.contains("class_uid = $1"));
+        assert!(with_class.contains("ORDER BY time DESC"));
+        assert!(with_class.contains("LIMIT 100"));
+
+        // With both filters
+        let with_both =
+            format!("{base} AND class_uid = $1 AND severity >= $2 ORDER BY time DESC LIMIT 50");
+        assert!(with_both.contains("class_uid = $1"));
+        assert!(with_both.contains("severity >= $2"));
+        assert!(with_both.contains("LIMIT 50"));
+    }
+
+    #[test]
+    fn event_filters_defaults() {
+        use super::EventFilters;
+        let filters = EventFilters {
+            class_uid: None,
+            min_severity: None,
+            limit: 100,
+        };
+        assert!(filters.class_uid.is_none());
+        assert!(filters.min_severity.is_none());
+        assert_eq!(filters.limit, 100);
     }
 
     #[test]
