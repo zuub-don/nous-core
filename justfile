@@ -57,3 +57,11 @@ clean:
 # Watch mode: re-run tests on file changes (requires cargo-watch)
 watch:
     cargo watch -x 'test --workspace'
+
+# Build mdBook documentation
+docs:
+    mdbook build docs
+
+# Serve mdBook documentation with live reload
+docs-serve:
+    mdbook serve docs --open
