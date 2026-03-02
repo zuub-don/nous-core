@@ -1,6 +1,6 @@
 [package]
 name = "nous-ctl"
-description = "Control plane client for Nous Core (TUI/CLI)"
+description = "Control plane client for Nous Core (CLI)"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -12,14 +12,14 @@ path = "src/main.rs"
 
 [dependencies]
 nous-core = { workspace = true }
+nous-proto = { workspace = true }
 tokio = { workspace = true }
+tonic = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 anyhow = { workspace = true }
-ratatui = "0.29"
-crossterm = "0.28"
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["test-util", "macros"] }

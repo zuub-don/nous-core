@@ -96,6 +96,16 @@ pub enum EventPayload {
     NetworkConnection(NetworkConnection),
     DetectionFinding(DetectionFinding),
     SystemLog(SystemLog),
+    Generic(GenericEvent),
+}
+
+/// Fallback for unrecognized event types — preserves the raw data.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GenericEvent {
+    /// Source event type string (e.g., "fileinfo", "tls").
+    pub event_type: String,
+    /// Raw event data preserved as-is.
+    pub data: serde_json::Value,
 }
 
 /// OCSF class_uid: 4003 (DNS Activity).
@@ -259,5 +269,39 @@ mod tests {
         let deser: NousEvent = serde_json::from_str(&json).unwrap();
         assert_eq!(deser.class_uid, evt.class_uid);
         assert_eq!(deser.severity, evt.severity);
+    }
+
+    #[test]
+    fn generic_event_serde_roundtrip() {
+        let evt = NousEvent::new(
+            1_000_000_000,
+            0,
+            0,
+            Severity::Info,
+            EventSource {
+                adapter: AdapterType::Suricata,
+                product: None,
+                sensor: None,
+                original_id: None,
+            },
+            EventPayload::Generic(GenericEvent {
+                event_type: "fileinfo".into(),
+                data: serde_json::json!({
+                    "filename": "/index.html",
+                    "size": 1024
+                }),
+            }),
+        );
+
+        let json = serde_json::to_string(&evt).unwrap();
+        let deser: NousEvent = serde_json::from_str(&json).unwrap();
+        assert_eq!(deser.class_uid, 0);
+        match &deser.payload {
+            EventPayload::Generic(g) => {
+                assert_eq!(g.event_type, "fileinfo");
+                assert_eq!(g.data["size"], 1024);
+            }
+            _ => panic!("expected Generic payload"),
+        }
     }
 }

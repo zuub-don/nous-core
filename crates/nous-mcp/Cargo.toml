@@ -12,7 +12,9 @@ path = "src/main.rs"
 
 [dependencies]
 nous-core = { workspace = true }
+nous-proto = { workspace = true }
 tokio = { workspace = true }
+tonic = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
 serde = { workspace = true }

@@ -1,0 +1,77 @@
+syntax = "proto3";
+
+package nous;
+
+// Nous Core gRPC service.
+service NousService {
+  // Get current engine status.
+  rpc GetStatus (GetStatusRequest) returns (GetStatusResponse);
+
+  // Query recent events with optional filters.
+  rpc QueryEvents (QueryEventsRequest) returns (QueryEventsResponse);
+
+  // Look up an entity's risk score.
+  rpc QueryEntity (QueryEntityRequest) returns (QueryEntityResponse);
+
+  // Generate a context window from current semantic state.
+  rpc Observe (ObserveRequest) returns (ObserveResponse);
+}
+
+message GetStatusRequest {}
+
+message GetStatusResponse {
+  // Total events ingested since startup.
+  uint64 event_count = 1;
+  // Number of active findings.
+  uint64 active_findings = 2;
+  // Seconds since engine started.
+  uint64 uptime_seconds = 3;
+  // Engine version string.
+  string version = 4;
+}
+
+message QueryEventsRequest {
+  // Filter by OCSF class_uid (0 = all).
+  uint32 class_uid = 1;
+  // Filter by minimum severity (0 = all).
+  uint32 min_severity = 2;
+  // Maximum number of events to return.
+  uint32 limit = 3;
+}
+
+message QueryEventsResponse {
+  // Events serialized as JSON strings.
+  repeated string events = 1;
+  // Total matching events (may exceed limit).
+  uint64 total = 2;
+}
+
+message QueryEntityRequest {
+  // Entity type (e.g., "ip_address", "domain").
+  string entity_type = 1;
+  // Entity value (e.g., "10.0.0.1", "example.com").
+  string value = 2;
+}
+
+message QueryEntityResponse {
+  // Whether the entity was found.
+  bool found = 1;
+  // Risk score (0-100), 0 if not found.
+  uint32 risk_score = 2;
+  // Entity type echoed back.
+  string entity_type = 3;
+  // Entity value echoed back.
+  string value = 4;
+}
+
+message ObserveRequest {
+  // Token budget (0 = default 4096).
+  uint32 token_budget = 1;
+  // Output format: "structured_json", "narrative", "delta".
+  string format = 2;
+}
+
+message ObserveResponse {
+  // The context window as a JSON string.
+  string context_window = 1;
+}
