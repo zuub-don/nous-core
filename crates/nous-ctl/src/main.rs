@@ -152,6 +152,16 @@ async fn cmd_entity(args: &[String]) -> Result<()> {
     if entity.found {
         println!("entity:     {} = {}", entity.entity_type, entity.value);
         println!("risk_score: {}", entity.risk_score);
+        println!("hit_count:  {}", entity.hit_count);
+        if !entity.co_occurrences.is_empty() {
+            println!("related:");
+            for cooc in &entity.co_occurrences {
+                println!(
+                    "  {:<10} {:<20} ({} events)",
+                    cooc.entity_type, cooc.value, cooc.count
+                );
+            }
+        }
     } else {
         println!(
             "entity not found: {} = {}",

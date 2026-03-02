@@ -51,6 +51,14 @@
 - [Context Windows](concepts/context-windows.md)
 - [Verdicts & Actions](concepts/verdicts-actions.md)
 
+# Playbooks
+
+- [Overview](playbooks/overview.md)
+- [Triage Alert Backlog](playbooks/triage-alert-backlog.md)
+- [Threat Hunt from IOC](playbooks/threat-hunt-from-ioc.md)
+- [Reduce Alert Fatigue](playbooks/reduce-alert-fatigue.md)
+- [Investigate Entity](playbooks/investigate-entity.md)
+
 # Appendix
 
 - [OCSF Class Reference](appendix/ocsf-classes.md)

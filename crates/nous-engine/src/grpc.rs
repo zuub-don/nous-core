@@ -13,8 +13,8 @@ use nous_core::context::{ContextFormat, ContextGenerator, TokenBudget};
 use nous_core::entity::EntityType;
 use nous_core::verdict::{TriageVerdict, Verdict};
 use nous_proto::{
-    EventNotification, GetStatusRequest, GetStatusResponse, NousService, ObserveRequest,
-    ObserveResponse, QueryEntityRequest, QueryEntityResponse, QueryEventsRequest,
+    EntityCoOccurrence, EventNotification, GetStatusRequest, GetStatusResponse, NousService,
+    ObserveRequest, ObserveResponse, QueryEntityRequest, QueryEntityResponse, QueryEventsRequest,
     QueryEventsResponse, StreamEventsRequest, SubmitActionRequest, SubmitActionResponse,
     SubmitVerdictRequest, SubmitVerdictResponse,
 };
@@ -113,13 +113,38 @@ impl NousService for NousGrpcService {
             .map_err(|e| Status::internal(format!("lock poisoned: {e}")))?;
 
         let entity_type = parse_entity_type(&req.entity_type)?;
-        let risk_score = store.state.entity_risk(entity_type, &req.value);
+        let meta = store.state.entity_meta(entity_type, &req.value);
+        let found = meta.is_some();
+
+        let (risk_score, hit_count, first_seen, last_seen) = match meta {
+            Some(m) => (m.risk_score as u32, m.hit_count, m.first_seen, m.last_seen),
+            None => (0, 0, 0, 0),
+        };
+
+        let co_occurrences: Vec<EntityCoOccurrence> = if found {
+            store
+                .state
+                .entity_co_occurrences(entity_type, &req.value, 10)
+                .into_iter()
+                .map(|((et, val), count)| EntityCoOccurrence {
+                    entity_type: format!("{et:?}").to_lowercase(),
+                    value: val,
+                    count,
+                })
+                .collect()
+        } else {
+            Vec::new()
+        };
 
         Ok(Response::new(QueryEntityResponse {
-            found: risk_score.is_some(),
-            risk_score: risk_score.unwrap_or(0) as u32,
+            found,
+            risk_score,
             entity_type: req.entity_type,
             value: req.value,
+            hit_count,
+            first_seen,
+            last_seen,
+            co_occurrences,
         }))
     }
 

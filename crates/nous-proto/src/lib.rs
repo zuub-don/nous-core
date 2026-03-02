@@ -11,10 +11,10 @@ pub mod nous {
 pub use nous::nous_service_client::NousServiceClient;
 pub use nous::nous_service_server::{NousService, NousServiceServer};
 pub use nous::{
-    EventNotification, GetStatusRequest, GetStatusResponse, ObserveRequest, ObserveResponse,
-    QueryEntityRequest, QueryEntityResponse, QueryEventsRequest, QueryEventsResponse,
-    StreamEventsRequest, SubmitActionRequest, SubmitActionResponse, SubmitVerdictRequest,
-    SubmitVerdictResponse,
+    EntityCoOccurrence, EventNotification, GetStatusRequest, GetStatusResponse, ObserveRequest,
+    ObserveResponse, QueryEntityRequest, QueryEntityResponse, QueryEventsRequest,
+    QueryEventsResponse, StreamEventsRequest, SubmitActionRequest, SubmitActionResponse,
+    SubmitVerdictRequest, SubmitVerdictResponse,
 };
 
 #[cfg(test)]
@@ -56,6 +56,36 @@ mod tests {
         };
         assert_eq!(req.token_budget, 0);
         assert!(req.format.is_empty());
+    }
+
+    #[test]
+    fn entity_co_occurrence_type_exists() {
+        let cooc = EntityCoOccurrence {
+            entity_type: "domain".into(),
+            value: "evil.com".into(),
+            count: 23,
+        };
+        assert_eq!(cooc.count, 23);
+    }
+
+    #[test]
+    fn query_entity_response_has_new_fields() {
+        let resp = QueryEntityResponse {
+            found: true,
+            risk_score: 75,
+            entity_type: "ip_address".into(),
+            value: "10.0.0.1".into(),
+            hit_count: 47,
+            first_seen: 1_000_000,
+            last_seen: 2_000_000,
+            co_occurrences: vec![EntityCoOccurrence {
+                entity_type: "domain".into(),
+                value: "evil.com".into(),
+                count: 23,
+            }],
+        };
+        assert_eq!(resp.hit_count, 47);
+        assert_eq!(resp.co_occurrences.len(), 1);
     }
 
     #[test]

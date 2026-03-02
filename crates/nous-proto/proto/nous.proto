@@ -71,6 +71,23 @@ message QueryEntityResponse {
   string entity_type = 3;
   // Entity value echoed back.
   string value = 4;
+  // Total events referencing this entity.
+  uint64 hit_count = 5;
+  // First seen timestamp (epoch nanos).
+  int64 first_seen = 6;
+  // Last seen timestamp (epoch nanos).
+  int64 last_seen = 7;
+  // Co-occurring entities, sorted by count descending.
+  repeated EntityCoOccurrence co_occurrences = 8;
+}
+
+message EntityCoOccurrence {
+  // Entity type of the co-occurring entity.
+  string entity_type = 1;
+  // Value of the co-occurring entity.
+  string value = 2;
+  // Number of events where the two entities co-occur.
+  uint64 count = 3;
 }
 
 message ObserveRequest {

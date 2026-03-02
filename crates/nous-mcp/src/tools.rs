@@ -65,7 +65,7 @@ pub fn tool_definitions() -> Value {
             },
             {
                 "name": "query_entity",
-                "description": "Look up an entity's risk score by type and value.",
+                "description": "Look up an entity's risk score, hit count, timestamps, and co-occurring entities.",
                 "inputSchema": {
                     "type": "object",
                     "properties": {
@@ -244,11 +244,27 @@ async fn execute_query_entity(
         .map_err(|e| format!("gRPC error: {e}"))?;
 
     let entity = response.into_inner();
+    let co_occurrences: Vec<Value> = entity
+        .co_occurrences
+        .iter()
+        .map(|c| {
+            json!({
+                "entity_type": c.entity_type,
+                "value": c.value,
+                "count": c.count
+            })
+        })
+        .collect();
+
     Ok(json!({
         "found": entity.found,
         "entity_type": entity.entity_type,
         "value": entity.value,
-        "risk_score": entity.risk_score
+        "risk_score": entity.risk_score,
+        "hit_count": entity.hit_count,
+        "first_seen": entity.first_seen,
+        "last_seen": entity.last_seen,
+        "co_occurrences": co_occurrences
     }))
 }
 

@@ -40,7 +40,13 @@ nous-ctl entity user root
 ```
 entity:     ip_address = 10.0.0.1
 risk_score: 75
+hit_count:  47
+related:
+  domain     evil.com             (23 events)
+  ip_address 10.0.0.2             (15 events)
 ```
+
+The `related` section shows co-occurring entities — other entities that appear in the same events as the queried entity. This enables graph-style pivoting during investigations.
 
 ## Output: Entity Not Found
 

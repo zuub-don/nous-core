@@ -43,6 +43,9 @@ pub struct SemanticState {
 
     /// Suppression rules: rule_uid → suppress-until timestamp (epoch nanos).
     suppression_rules: HashMap<String, i64>,
+
+    /// Entity co-occurrence counts: (entity_a) → {(entity_b) → count}.
+    co_occurrences: HashMap<(EntityType, String), HashMap<(EntityType, String), u64>>,
 }
 
 impl SemanticState {
@@ -60,8 +63,9 @@ impl SemanticState {
         self.severity_histogram[event.severity.id() as usize] += 1;
 
         // Auto-extract entities and update metadata
-        for (etype, val) in extract_entities(event) {
-            let key = (etype, val);
+        let entities = extract_entities(event);
+        for (etype, val) in &entities {
+            let key = (*etype, val.clone());
             let meta = self.entity_meta.entry(key).or_insert_with(|| EntityMeta {
                 risk_score: 0,
                 first_seen: event.time,
@@ -70,6 +74,29 @@ impl SemanticState {
             });
             meta.last_seen = event.time;
             meta.hit_count += 1;
+        }
+
+        // Track co-occurrences: deduplicate, then increment both directions.
+        let mut unique: Vec<(EntityType, String)> = entities;
+        unique.sort_by(|a, b| a.0.cmp(&b.0).then_with(|| a.1.cmp(&b.1)));
+        unique.dedup();
+        for i in 0..unique.len() {
+            for j in (i + 1)..unique.len() {
+                let a = &unique[i];
+                let b = &unique[j];
+                *self
+                    .co_occurrences
+                    .entry(a.clone())
+                    .or_default()
+                    .entry(b.clone())
+                    .or_insert(0) += 1;
+                *self
+                    .co_occurrences
+                    .entry(b.clone())
+                    .or_default()
+                    .entry(a.clone())
+                    .or_insert(0) += 1;
+            }
         }
     }
 
@@ -189,6 +216,26 @@ impl SemanticState {
             .is_some_and(|&until| now < until)
     }
 
+    /// Return top N co-occurring entities for a given entity, sorted by count descending.
+    pub fn entity_co_occurrences(
+        &self,
+        et: EntityType,
+        val: &str,
+        limit: usize,
+    ) -> Vec<((EntityType, String), u64)> {
+        let key = (et, val.to_owned());
+        let Some(neighbors) = self.co_occurrences.get(&key) else {
+            return Vec::new();
+        };
+        let mut entries: Vec<_> = neighbors
+            .iter()
+            .map(|(k, &count)| (k.clone(), count))
+            .collect();
+        entries.sort_by(|a, b| b.1.cmp(&a.1));
+        entries.truncate(limit);
+        entries
+    }
+
     /// Number of tracked entities.
     pub fn entity_count(&self) -> usize {
         self.entity_meta.len()
@@ -202,6 +249,7 @@ impl SemanticState {
         self.severity_histogram = [0; 6];
         self.suppression_rules.clear();
         self.entity_meta.clear();
+        self.co_occurrences.clear();
     }
 
     /// Produce a state snapshot event payload.
@@ -511,6 +559,82 @@ mod tests {
             state.entity_risk(EntityType::IpAddress, "10.0.0.1"),
             Some(0)
         );
+    }
+
+    #[test]
+    fn co_occurrence_dns_creates_pairs() {
+        let mut state = SemanticState::new();
+        state.ingest(&sample_dns_event());
+
+        // DNS event has: ip 10.0.0.1, ip 8.8.8.8, domain evil.com
+        // So evil.com should co-occur with both IPs
+        let coocs = state.entity_co_occurrences(EntityType::Domain, "evil.com", 10);
+        assert_eq!(coocs.len(), 2);
+        let vals: Vec<&str> = coocs.iter().map(|((_, v), _)| v.as_str()).collect();
+        assert!(vals.contains(&"10.0.0.1"));
+        assert!(vals.contains(&"8.8.8.8"));
+
+        // Both IPs should co-occur with each other and with the domain
+        let coocs = state.entity_co_occurrences(EntityType::IpAddress, "10.0.0.1", 10);
+        assert_eq!(coocs.len(), 2);
+    }
+
+    #[test]
+    fn co_occurrence_accumulates_counts() {
+        let mut state = SemanticState::new();
+        state.ingest(&sample_dns_event());
+        state.ingest(&sample_dns_event());
+
+        let coocs = state.entity_co_occurrences(EntityType::Domain, "evil.com", 10);
+        // Each pair should have count 2
+        for (_, count) in &coocs {
+            assert_eq!(*count, 2);
+        }
+    }
+
+    #[test]
+    fn co_occurrence_self_pairs_excluded() {
+        let mut state = SemanticState::new();
+        state.ingest(&sample_dns_event());
+
+        let coocs = state.entity_co_occurrences(EntityType::IpAddress, "10.0.0.1", 10);
+        // Should not contain itself
+        for ((et, val), _) in &coocs {
+            assert!(
+                !(*et == EntityType::IpAddress && val == "10.0.0.1"),
+                "self-pair should be excluded"
+            );
+        }
+    }
+
+    #[test]
+    fn co_occurrence_limit_works() {
+        let mut state = SemanticState::new();
+        state.ingest(&sample_dns_event());
+
+        // evil.com has 2 neighbors but limit to 1
+        let coocs = state.entity_co_occurrences(EntityType::Domain, "evil.com", 1);
+        assert_eq!(coocs.len(), 1);
+    }
+
+    #[test]
+    fn co_occurrence_unknown_entity_returns_empty() {
+        let state = SemanticState::new();
+        let coocs = state.entity_co_occurrences(EntityType::IpAddress, "99.99.99.99", 10);
+        assert!(coocs.is_empty());
+    }
+
+    #[test]
+    fn co_occurrence_cleared_on_reset() {
+        let mut state = SemanticState::new();
+        state.ingest(&sample_dns_event());
+        assert!(!state
+            .entity_co_occurrences(EntityType::Domain, "evil.com", 10)
+            .is_empty());
+        state.reset_counters();
+        assert!(state
+            .entity_co_occurrences(EntityType::Domain, "evil.com", 10)
+            .is_empty());
     }
 
     #[test]
