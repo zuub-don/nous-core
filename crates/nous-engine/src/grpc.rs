@@ -14,7 +14,8 @@ use nous_core::entity::EntityType;
 use nous_core::verdict::{TriageVerdict, Verdict};
 use nous_proto::{
     EntityCoOccurrence, EventNotification, GetStatusRequest, GetStatusResponse, NousService,
-    ObserveRequest, ObserveResponse, QueryEntityRequest, QueryEntityResponse, QueryEventsRequest,
+    ObserveRequest, ObserveResponse, QueryCorrelationFindingsRequest,
+    QueryCorrelationFindingsResponse, QueryEntityRequest, QueryEntityResponse, QueryEventsRequest,
     QueryEventsResponse, StreamEventsRequest, SubmitActionRequest, SubmitActionResponse,
     SubmitVerdictRequest, SubmitVerdictResponse,
 };
@@ -59,6 +60,7 @@ impl NousService for NousGrpcService {
             active_findings: store.state.active_findings(),
             uptime_seconds: self.start_time.elapsed().as_secs(),
             version: env!("CARGO_PKG_VERSION").to_string(),
+            correlation_findings: store.correlation_finding_count(),
         }))
     }
 
@@ -281,6 +283,35 @@ impl NousService for NousGrpcService {
         Ok(Response::new(SubmitActionResponse {
             action_id,
             accepted: true,
+        }))
+    }
+
+    async fn query_correlation_findings(
+        &self,
+        request: Request<QueryCorrelationFindingsRequest>,
+    ) -> Result<Response<QueryCorrelationFindingsResponse>, Status> {
+        let req = request.into_inner();
+        let store = self
+            .shared
+            .read()
+            .map_err(|e| Status::internal(format!("lock poisoned: {e}")))?;
+
+        let limit = if req.limit == 0 {
+            50
+        } else {
+            req.limit as usize
+        };
+        let findings = store.recent_correlation_findings(limit);
+        let total = store.correlation_finding_count();
+
+        let json_findings: Vec<String> = findings
+            .iter()
+            .filter_map(|e| serde_json::to_string(e).ok())
+            .collect();
+
+        Ok(Response::new(QueryCorrelationFindingsResponse {
+            findings: json_findings,
+            total,
         }))
     }
 

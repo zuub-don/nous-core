@@ -11,6 +11,8 @@ pub struct Config {
     pub buffer_size: usize,
     /// Adapter name: "suricata", "zeek", "syslog", "journald", or "auto".
     pub adapter: String,
+    /// Correlation engine sliding window duration in seconds.
+    pub correlation_window_secs: u64,
     /// PostgreSQL database URL (optional, requires `persistence` feature).
     pub db_url: Option<String>,
 }
@@ -22,6 +24,7 @@ impl Default for Config {
             grpc_port: 50051,
             buffer_size: 1000,
             adapter: "auto".into(),
+            correlation_window_secs: 300,
             db_url: None,
         }
     }
@@ -35,6 +38,7 @@ impl Config {
     /// - `--grpc-port <port>`: gRPC listen port (default: 50051)
     /// - `--buffer-size <n>`: event ring buffer capacity (default: 1000)
     /// - `--adapter <name>`: adapter to use (default: auto)
+    /// - `--correlation-window <secs>`: correlation window duration (default: 300)
     /// - `--db-url <url>`: PostgreSQL connection URL
     pub fn from_args(args: &[String]) -> Result<Self, String> {
         let mut config = Config::default();
@@ -62,6 +66,13 @@ impl Config {
                     i += 1;
                     config.adapter = args.get(i).ok_or("--adapter requires a value")?.clone();
                 }
+                "--correlation-window" => {
+                    i += 1;
+                    let val = args.get(i).ok_or("--correlation-window requires a value")?;
+                    config.correlation_window_secs = val
+                        .parse()
+                        .map_err(|_| format!("invalid correlation window: {val}"))?;
+                }
                 "--db-url" => {
                     i += 1;
                     config.db_url = Some(args.get(i).ok_or("--db-url requires a value")?.clone());
@@ -88,6 +99,7 @@ mod tests {
         assert_eq!(config.grpc_port, 50051);
         assert_eq!(config.buffer_size, 1000);
         assert_eq!(config.adapter, "auto");
+        assert_eq!(config.correlation_window_secs, 300);
         assert!(config.db_url.is_none());
     }
 

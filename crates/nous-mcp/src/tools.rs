@@ -5,8 +5,8 @@ use tonic::transport::Channel;
 use tracing::debug;
 
 use nous_proto::{
-    GetStatusRequest, NousServiceClient, ObserveRequest, QueryEntityRequest, QueryEventsRequest,
-    SubmitActionRequest, SubmitVerdictRequest,
+    GetStatusRequest, NousServiceClient, ObserveRequest, QueryCorrelationFindingsRequest,
+    QueryEntityRequest, QueryEventsRequest, SubmitActionRequest, SubmitVerdictRequest,
 };
 
 /// Tool definition for the MCP tools/list response.
@@ -143,6 +143,20 @@ pub fn tool_definitions() -> Value {
                     },
                     "required": ["action_type", "agent_id", "target_entity_type", "target_value", "reasoning"]
                 }
+            },
+            {
+                "name": "query_correlation_findings",
+                "description": "Query recent correlation findings (grouped incidents, high-frequency DNS, etc.).",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "limit": {
+                            "type": "integer",
+                            "description": "Maximum findings to return (default 50)"
+                        }
+                    },
+                    "required": []
+                }
             }
         ]
     })
@@ -163,6 +177,7 @@ pub async fn execute_tool(
         "query_entity" => execute_query_entity(client, arguments).await,
         "submit_verdict" => execute_submit_verdict(client, arguments).await,
         "submit_action" => execute_submit_action(client, arguments).await,
+        "query_correlation_findings" => execute_query_correlation_findings(client, arguments).await,
         other => Err(format!("unknown tool: {other}")),
     }
 }
@@ -339,6 +354,30 @@ async fn execute_submit_action(
     }))
 }
 
+async fn execute_query_correlation_findings(
+    client: &mut NousServiceClient<Channel>,
+    args: &Value,
+) -> Result<Value, String> {
+    let response = client
+        .query_correlation_findings(QueryCorrelationFindingsRequest {
+            limit: args["limit"].as_u64().unwrap_or(50) as u32,
+        })
+        .await
+        .map_err(|e| format!("gRPC error: {e}"))?;
+
+    let findings = response.into_inner();
+    let parsed: Vec<Value> = findings
+        .findings
+        .iter()
+        .filter_map(|f| serde_json::from_str(f).ok())
+        .collect();
+
+    Ok(json!({
+        "findings": parsed,
+        "total": findings.total
+    }))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -347,7 +386,7 @@ mod tests {
     fn tool_definitions_are_valid_json() {
         let defs = tool_definitions();
         let tools = defs["tools"].as_array().unwrap();
-        assert_eq!(tools.len(), 6);
+        assert_eq!(tools.len(), 7);
 
         // Verify all tools have required fields
         for tool in tools {
@@ -368,6 +407,7 @@ mod tests {
         assert!(names.contains(&"query_entity"));
         assert!(names.contains(&"submit_verdict"));
         assert!(names.contains(&"submit_action"));
+        assert!(names.contains(&"query_correlation_findings"));
     }
 
     #[test]

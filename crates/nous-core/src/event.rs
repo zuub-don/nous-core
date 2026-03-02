@@ -107,10 +107,56 @@ pub enum EventPayload {
     ProcessActivity(ProcessActivity),
     Authentication(Authentication),
     SystemLog(SystemLog),
+    CorrelationFinding(CorrelationFinding),
     AgentAction(AgentAction),
     Verdict(Verdict),
     StateSnapshot(StateSnapshot),
     Generic(GenericEvent),
+}
+
+/// OCSF class_uid: 2001 (Correlation Finding).
+///
+/// Produced by the correlation engine when multiple events match a rule
+/// within a sliding time window.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CorrelationFinding {
+    /// Human-readable title for the correlation finding.
+    pub title: String,
+    /// Detailed description of the correlated activity.
+    pub description: String,
+    /// Which correlation rule fired.
+    pub rule_id: CorrelationRuleId,
+    /// Entities involved in the correlation.
+    pub entities: Vec<Entity>,
+    /// IDs of the source events that contributed to this finding.
+    pub source_event_ids: Vec<Uuid>,
+    /// Number of signals that matched the rule.
+    pub signal_count: u32,
+    /// Start of the correlation window (epoch nanos).
+    pub window_start: i64,
+    /// End of the correlation window (epoch nanos).
+    pub window_end: i64,
+    /// Computed risk score (0-100).
+    pub risk_score: u8,
+    /// Risk level classification.
+    pub risk_level: RiskLevel,
+    /// Finding status.
+    pub status: FindingStatus,
+    /// Optional MITRE ATT&CK mapping.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub attack: Option<AttackMapping>,
+}
+
+/// Correlation rule identifier.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CorrelationRuleId {
+    /// Multiple DetectionFindings share entities within a window.
+    EntityCluster,
+    /// Excessive DNS queries from a single source IP.
+    HighFrequencyDns,
+    /// User-defined correlation rule.
+    Custom(String),
 }
 
 /// Fallback for unrecognized event types — preserves the raw data.
@@ -677,6 +723,68 @@ mod tests {
                 assert_eq!(s.entity_scores.len(), 1);
             }
             _ => panic!("expected StateSnapshot"),
+        }
+    }
+
+    #[test]
+    fn correlation_finding_serde_roundtrip() {
+        use crate::entity::Entity;
+
+        let finding = CorrelationFinding {
+            title: "Entity cluster detected".into(),
+            description: "3 findings share entity 10.0.0.1".into(),
+            rule_id: CorrelationRuleId::EntityCluster,
+            entities: vec![Entity::new(
+                crate::entity::EntityType::IpAddress,
+                "10.0.0.1",
+            )],
+            source_event_ids: vec![Uuid::nil()],
+            signal_count: 3,
+            window_start: 1_000_000_000,
+            window_end: 2_000_000_000,
+            risk_score: 80,
+            risk_level: RiskLevel::High,
+            status: FindingStatus::New,
+            attack: None,
+        };
+        let evt = NousEvent::new(
+            1_000_000_000,
+            2001,
+            2,
+            Severity::High,
+            EventSource {
+                adapter: AdapterType::NousInternal,
+                product: None,
+                sensor: None,
+                original_id: None,
+            },
+            EventPayload::CorrelationFinding(finding),
+        );
+        let json = serde_json::to_string(&evt).unwrap();
+        let deser: NousEvent = serde_json::from_str(&json).unwrap();
+        assert_eq!(deser.class_uid, 2001);
+        match &deser.payload {
+            EventPayload::CorrelationFinding(cf) => {
+                assert_eq!(cf.title, "Entity cluster detected");
+                assert_eq!(cf.rule_id, CorrelationRuleId::EntityCluster);
+                assert_eq!(cf.signal_count, 3);
+                assert_eq!(cf.risk_score, 80);
+            }
+            _ => panic!("expected CorrelationFinding payload"),
+        }
+    }
+
+    #[test]
+    fn correlation_rule_id_variants_serde() {
+        let variants = vec![
+            CorrelationRuleId::EntityCluster,
+            CorrelationRuleId::HighFrequencyDns,
+            CorrelationRuleId::Custom("my_rule".into()),
+        ];
+        for v in &variants {
+            let json = serde_json::to_string(v).unwrap();
+            let deser: CorrelationRuleId = serde_json::from_str(&json).unwrap();
+            assert_eq!(&deser, v);
         }
     }
 

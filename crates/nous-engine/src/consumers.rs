@@ -1,8 +1,9 @@
-//! Event bus consumers: state ingestion and NDJSON emission.
+//! Event bus consumers: state ingestion, NDJSON emission, and correlation.
 
-use tracing::{debug, warn};
+use tracing::{debug, info, warn};
 
 use crate::bus::EventBus;
+use crate::correlation::CorrelationEngine;
 use crate::state_store::SharedState;
 
 /// Consume events from the bus and ingest into shared state.
@@ -51,6 +52,34 @@ pub async fn ndjson_emitter(bus: &EventBus) {
             }
             Err(tokio::sync::broadcast::error::RecvError::Closed) => {
                 debug!("ndjson emitter: bus closed");
+                break;
+            }
+        }
+    }
+}
+
+/// Consume events from the bus, run correlation rules, and publish findings back.
+pub async fn correlation_consumer(bus: &EventBus, window_secs: u64) {
+    let mut rx = bus.subscribe();
+    let mut engine = CorrelationEngine::new(window_secs);
+
+    loop {
+        match rx.recv().await {
+            Ok(event) => {
+                let findings = engine.process(event);
+                for finding in findings {
+                    info!(
+                        class_uid = finding.class_uid,
+                        "correlation consumer: publishing finding"
+                    );
+                    bus.publish(finding);
+                }
+            }
+            Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
+                warn!(skipped = n, "correlation consumer: lagged behind");
+            }
+            Err(tokio::sync::broadcast::error::RecvError::Closed) => {
+                debug!("correlation consumer: bus closed");
                 break;
             }
         }

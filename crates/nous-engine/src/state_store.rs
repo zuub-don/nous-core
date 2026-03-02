@@ -20,6 +20,8 @@ pub struct StateStore {
     capacity: usize,
     /// Verdict history.
     verdicts: Vec<Verdict>,
+    /// Recent correlation findings (class_uid 2001), capped.
+    correlation_findings: VecDeque<NousEvent>,
 }
 
 impl StateStore {
@@ -30,6 +32,7 @@ impl StateStore {
             events: VecDeque::with_capacity(capacity),
             capacity,
             verdicts: Vec::new(),
+            correlation_findings: VecDeque::new(),
         }
     }
 
@@ -38,8 +41,16 @@ impl StateStore {
         self.state.ingest(&event);
 
         // Track findings by ID
-        if event.class_uid == 2004 {
+        if event.class_uid == 2004 || event.class_uid == 2001 {
             self.state.add_finding_id(event.id);
+        }
+
+        // Buffer correlation findings separately
+        if event.class_uid == 2001 {
+            if self.correlation_findings.len() >= 200 {
+                self.correlation_findings.pop_front();
+            }
+            self.correlation_findings.push_back(event.clone());
         }
 
         // Buffer event, evicting oldest if at capacity
@@ -79,6 +90,16 @@ impl StateStore {
     #[allow(dead_code)]
     pub fn verdicts(&self) -> &[Verdict] {
         &self.verdicts
+    }
+
+    /// Return recent correlation findings, most recent first.
+    pub fn recent_correlation_findings(&self, limit: usize) -> Vec<&NousEvent> {
+        self.correlation_findings.iter().rev().take(limit).collect()
+    }
+
+    /// Number of correlation findings stored.
+    pub fn correlation_finding_count(&self) -> u64 {
+        self.correlation_findings.len() as u64
     }
 
     /// Total number of buffered events.

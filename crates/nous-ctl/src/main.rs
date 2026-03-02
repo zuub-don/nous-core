@@ -4,8 +4,8 @@ use anyhow::{Context, Result};
 use tokio_stream::StreamExt;
 
 use nous_proto::{
-    GetStatusRequest, NousServiceClient, ObserveRequest, QueryEntityRequest, QueryEventsRequest,
-    StreamEventsRequest, SubmitVerdictRequest,
+    GetStatusRequest, NousServiceClient, ObserveRequest, QueryCorrelationFindingsRequest,
+    QueryEntityRequest, QueryEventsRequest, StreamEventsRequest, SubmitVerdictRequest,
 };
 
 #[tokio::main]
@@ -19,6 +19,7 @@ async fn main() -> Result<()> {
         "observe" => cmd_observe(&args[1..]).await,
         "entity" => cmd_entity(&args[1..]).await,
         "verdict" => cmd_verdict(&args[1..]).await,
+        "correlations" => cmd_correlations(&args[1..]).await,
         "watch" => cmd_watch(&args[1..]).await,
         "help" | "--help" | "-h" => {
             print_help();
@@ -48,6 +49,8 @@ fn print_help() {
     println!("  observe [OPTIONS]   Generate a context window");
     println!("    --budget <N>      Token budget (default 4096)");
     println!("    --format <F>      Output format: structured_json, narrative, delta");
+    println!("  correlations [OPTIONS] Query correlation findings");
+    println!("    --limit <N>       Maximum findings to return (default 50)");
     println!("  entity <TYPE> <VALUE>  Query entity risk score");
     println!("  verdict <FINDING_ID> <VERDICT> [OPTIONS]  Submit triage verdict");
     println!("    --agent <ID>      Agent ID (default: nous-ctl)");
@@ -84,7 +87,31 @@ async fn cmd_status() -> Result<()> {
     println!("nous-engine v{}", status.version);
     println!("  events ingested:  {}", status.event_count);
     println!("  active findings:  {}", status.active_findings);
+    println!("  correlations:     {}", status.correlation_findings);
     println!("  uptime:           {}s", status.uptime_seconds);
+    Ok(())
+}
+
+async fn cmd_correlations(args: &[String]) -> Result<()> {
+    let parsed = parse_correlations_args(args)?;
+    let mut client = connect().await?;
+
+    let response = client
+        .query_correlation_findings(QueryCorrelationFindingsRequest {
+            limit: parsed.limit,
+        })
+        .await
+        .context("QueryCorrelationFindings RPC failed")?;
+
+    let findings = response.into_inner();
+    println!("total: {}", findings.total);
+    for finding_json in &findings.findings {
+        if let Ok(v) = serde_json::from_str::<serde_json::Value>(finding_json) {
+            println!("{}", serde_json::to_string_pretty(&v)?);
+        } else {
+            println!("{finding_json}");
+        }
+    }
     Ok(())
 }
 
@@ -225,6 +252,30 @@ async fn cmd_watch(args: &[String]) -> Result<()> {
         }
     }
     Ok(())
+}
+
+struct CorrelationsArgs {
+    limit: u32,
+}
+
+fn parse_correlations_args(args: &[String]) -> Result<CorrelationsArgs> {
+    let mut parsed = CorrelationsArgs { limit: 50 };
+    let mut i = 0;
+    while i < args.len() {
+        match args[i].as_str() {
+            "--limit" => {
+                i += 1;
+                parsed.limit = args
+                    .get(i)
+                    .context("--limit requires a value")?
+                    .parse()
+                    .context("invalid limit")?;
+            }
+            other => anyhow::bail!("unknown correlations option: {other}"),
+        }
+        i += 1;
+    }
+    Ok(parsed)
 }
 
 struct EventsArgs {

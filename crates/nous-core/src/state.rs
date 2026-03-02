@@ -6,8 +6,8 @@ use uuid::Uuid;
 
 use crate::entity::EntityType;
 use crate::event::{
-    Authentication, DetectionFinding, DnsActivity, EntityScore, EventPayload, HttpActivity,
-    NetworkConnection, NousEvent, StateSnapshot, TlsActivity,
+    Authentication, CorrelationFinding, DetectionFinding, DnsActivity, EntityScore, EventPayload,
+    HttpActivity, NetworkConnection, NousEvent, StateSnapshot, TlsActivity,
 };
 
 /// Metadata tracked per entity.
@@ -290,7 +290,8 @@ pub fn extract_entities(event: &NousEvent) -> Vec<(EntityType, String)> {
             entities.push((EntityType::IpAddress, src.ip.to_string()));
             entities.push((EntityType::IpAddress, dst.ip.to_string()));
         }
-        EventPayload::DetectionFinding(DetectionFinding { entities: ents, .. }) => {
+        EventPayload::DetectionFinding(DetectionFinding { entities: ents, .. })
+        | EventPayload::CorrelationFinding(CorrelationFinding { entities: ents, .. }) => {
             for e in ents {
                 entities.push((e.entity_type, e.value.clone()));
             }

@@ -12,9 +12,10 @@ pub use nous::nous_service_client::NousServiceClient;
 pub use nous::nous_service_server::{NousService, NousServiceServer};
 pub use nous::{
     EntityCoOccurrence, EventNotification, GetStatusRequest, GetStatusResponse, ObserveRequest,
-    ObserveResponse, QueryEntityRequest, QueryEntityResponse, QueryEventsRequest,
-    QueryEventsResponse, StreamEventsRequest, SubmitActionRequest, SubmitActionResponse,
-    SubmitVerdictRequest, SubmitVerdictResponse,
+    ObserveResponse, QueryCorrelationFindingsRequest, QueryCorrelationFindingsResponse,
+    QueryEntityRequest, QueryEntityResponse, QueryEventsRequest, QueryEventsResponse,
+    StreamEventsRequest, SubmitActionRequest, SubmitActionResponse, SubmitVerdictRequest,
+    SubmitVerdictResponse,
 };
 
 #[cfg(test)]
@@ -29,6 +30,7 @@ mod tests {
             active_findings: 5,
             uptime_seconds: 3600,
             version: "0.1.0".into(),
+            correlation_findings: 3,
         };
     }
 

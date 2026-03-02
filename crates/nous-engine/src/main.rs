@@ -3,6 +3,7 @@
 mod bus;
 mod config;
 mod consumers;
+mod correlation;
 mod feedback;
 mod grpc;
 mod ingest;
@@ -33,6 +34,7 @@ async fn main() -> Result<()> {
         grpc_port = config.grpc_port,
         buffer_size = config.buffer_size,
         adapter = %config.adapter,
+        correlation_window = config.correlation_window_secs,
         "nous-engine v{} starting",
         env!("CARGO_PKG_VERSION")
     );
@@ -51,6 +53,13 @@ async fn main() -> Result<()> {
     let ndjson_bus = bus.clone();
     tokio::spawn(async move {
         consumers::ndjson_emitter(&ndjson_bus).await;
+    });
+
+    // Spawn correlation consumer
+    let corr_bus = bus.clone();
+    let corr_window = config.correlation_window_secs;
+    tokio::spawn(async move {
+        consumers::correlation_consumer(&corr_bus, corr_window).await;
     });
 
     // Optionally spawn persistence consumer

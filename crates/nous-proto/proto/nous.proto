@@ -22,6 +22,9 @@ service NousService {
   // Submit a response action.
   rpc SubmitAction (SubmitActionRequest) returns (SubmitActionResponse);
 
+  // Query correlation findings.
+  rpc QueryCorrelationFindings (QueryCorrelationFindingsRequest) returns (QueryCorrelationFindingsResponse);
+
   // Stream events in real-time.
   rpc StreamEvents (StreamEventsRequest) returns (stream EventNotification);
 }
@@ -37,6 +40,8 @@ message GetStatusResponse {
   uint64 uptime_seconds = 3;
   // Engine version string.
   string version = 4;
+  // Number of correlation findings.
+  uint64 correlation_findings = 5;
 }
 
 message QueryEventsRequest {
@@ -156,4 +161,16 @@ message EventNotification {
   uint32 class_uid = 2;
   // Severity level (0-5).
   uint32 severity = 3;
+}
+
+message QueryCorrelationFindingsRequest {
+  // Maximum number of findings to return.
+  uint32 limit = 1;
+}
+
+message QueryCorrelationFindingsResponse {
+  // Findings serialized as JSON strings.
+  repeated string findings = 1;
+  // Total correlation findings stored.
+  uint64 total = 2;
 }
