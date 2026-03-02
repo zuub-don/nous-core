@@ -1,0 +1,23 @@
+[package]
+name = "nous-mcp"
+description = "MCP server bridge: exposes Nous Core API to AI agents via Model Context Protocol"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "nous-mcp"
+path = "src/main.rs"
+
+[dependencies]
+nous-core = { workspace = true }
+tokio = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+anyhow = { workspace = true }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["test-util", "macros"] }

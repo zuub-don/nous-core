@@ -1,0 +1,27 @@
+[package]
+name = "nous-engine"
+description = "Headless daemon: ingestion, normalization, correlation, and event emission"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "nous-engine"
+path = "src/main.rs"
+
+[dependencies]
+nous-core = { workspace = true }
+nous-adapters = { workspace = true }
+tokio = { workspace = true }
+crossbeam-channel = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+sonic-rs = { workspace = true }
+anyhow = { workspace = true }
+toml = { workspace = true }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["test-util", "macros"] }

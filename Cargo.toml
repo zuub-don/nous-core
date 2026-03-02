@@ -1,0 +1,65 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/nous-core",
+    "crates/nous-engine",
+    "crates/nous-ctl",
+    "crates/nous-mcp",
+    "crates/nous-adapters",
+    "crates/nous-proto",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.80"
+license = "Apache-2.0"
+repository = "https://github.com/nous-sec/nous-core"
+
+[workspace.dependencies]
+# Async runtime (benchmarked: 438µs spawn 1k tasks)
+tokio = { version = "1", features = ["full"] }
+
+# Channels (benchmarked: 1.53ms MPSC 10k msgs)
+crossbeam-channel = "0.5"
+
+# Serialization (benchmarked: sonic-rs 484ns deser)
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sonic-rs = "0.3"
+
+# SQL (benchmarked: 117ns query build, async-native)
+sqlx = { version = "0.8", features = ["runtime-tokio", "postgres", "json", "uuid", "chrono"] }
+
+# Logging (benchmarked: sub-ns filtered skip)
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
+
+# HTTP client (benchmarked: 629ns construction)
+ureq = "2"
+
+# Error handling
+thiserror = "2"
+anyhow = "1"
+
+# Common types
+uuid = { version = "1", features = ["v7", "serde"] }
+chrono = { version = "0.4", features = ["serde"] }
+
+# gRPC
+tonic = "0.12"
+prost = "0.13"
+tonic-build = "0.12"
+
+# Configuration
+toml = "0.8"
+
+# Workspace crates (internal)
+nous-core = { path = "crates/nous-core" }
+nous-adapters = { path = "crates/nous-adapters" }
+nous-proto = { path = "crates/nous-proto" }
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+strip = "symbols"
