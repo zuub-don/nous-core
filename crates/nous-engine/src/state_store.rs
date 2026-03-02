@@ -5,6 +5,7 @@ use std::sync::{Arc, RwLock};
 
 use nous_core::event::NousEvent;
 use nous_core::state::SemanticState;
+use nous_core::verdict::Verdict;
 
 /// Thread-safe shared state accessed by both ingestion and gRPC layers.
 pub type SharedState = Arc<RwLock<StateStore>>;
@@ -17,6 +18,8 @@ pub struct StateStore {
     events: VecDeque<NousEvent>,
     /// Maximum number of events to retain.
     capacity: usize,
+    /// Verdict history.
+    verdicts: Vec<Verdict>,
 }
 
 impl StateStore {
@@ -26,6 +29,7 @@ impl StateStore {
             state: SemanticState::new(),
             events: VecDeque::with_capacity(capacity),
             capacity,
+            verdicts: Vec::new(),
         }
     }
 
@@ -33,9 +37,9 @@ impl StateStore {
     pub fn ingest(&mut self, event: NousEvent) {
         self.state.ingest(&event);
 
-        // Track findings
+        // Track findings by ID
         if event.class_uid == 2004 {
-            self.state.add_finding();
+            self.state.add_finding_id(event.id);
         }
 
         // Buffer event, evicting oldest if at capacity
@@ -59,6 +63,22 @@ impl StateStore {
             .filter(|e| min_severity.map_or(true, |s| e.severity.id() >= s))
             .take(limit)
             .collect()
+    }
+
+    /// Return a slice of the most recent events for context generation.
+    pub fn recent_events_slice(&self, n: usize) -> Vec<&NousEvent> {
+        self.events.iter().rev().take(n).collect()
+    }
+
+    /// Store a verdict.
+    pub fn store_verdict(&mut self, verdict: Verdict) {
+        self.verdicts.push(verdict);
+    }
+
+    /// Get verdict history.
+    #[allow(dead_code)]
+    pub fn verdicts(&self) -> &[Verdict] {
+        &self.verdicts
     }
 
     /// Total number of buffered events.
@@ -156,11 +176,35 @@ mod tests {
     #[test]
     fn query_with_limit() {
         let mut store = StateStore::new(100);
-        for i in 0..10 {
+        for _ in 0..10 {
             store.ingest(sample_event(4003, Severity::Info));
-            let _ = i;
         }
         let events = store.query_events(None, None, 3);
         assert_eq!(events.len(), 3);
+    }
+
+    #[test]
+    fn recent_events_slice_returns_most_recent() {
+        let mut store = StateStore::new(100);
+        for i in 0..5 {
+            store.ingest(sample_event(i, Severity::Info));
+        }
+        let recent = store.recent_events_slice(3);
+        assert_eq!(recent.len(), 3);
+        assert_eq!(recent[0].class_uid, 4); // most recent first
+    }
+
+    #[test]
+    fn verdict_storage() {
+        let mut store = StateStore::new(100);
+        let v = nous_core::verdict::Verdict::new(
+            uuid::Uuid::now_v7(),
+            nous_core::verdict::TriageVerdict::TruePositive,
+            "agent-1",
+            "test",
+            0.9,
+        );
+        store.store_verdict(v);
+        assert_eq!(store.verdicts().len(), 1);
     }
 }

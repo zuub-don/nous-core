@@ -11,8 +11,10 @@ pub mod nous {
 pub use nous::nous_service_client::NousServiceClient;
 pub use nous::nous_service_server::{NousService, NousServiceServer};
 pub use nous::{
-    GetStatusRequest, GetStatusResponse, ObserveRequest, ObserveResponse, QueryEntityRequest,
-    QueryEntityResponse, QueryEventsRequest, QueryEventsResponse,
+    EventNotification, GetStatusRequest, GetStatusResponse, ObserveRequest, ObserveResponse,
+    QueryEntityRequest, QueryEntityResponse, QueryEventsRequest, QueryEventsResponse,
+    StreamEventsRequest, SubmitActionRequest, SubmitActionResponse, SubmitVerdictRequest,
+    SubmitVerdictResponse,
 };
 
 #[cfg(test)]
@@ -54,5 +56,46 @@ mod tests {
         };
         assert_eq!(req.token_budget, 0);
         assert!(req.format.is_empty());
+    }
+
+    #[test]
+    fn new_types_instantiate() {
+        let _vr = SubmitVerdictRequest {
+            finding_id: "uuid".into(),
+            verdict: "true_positive".into(),
+            agent_id: "agent-1".into(),
+            reasoning: "confirmed".into(),
+            confidence: 0.95,
+        };
+        let _ar = SubmitActionRequest {
+            action_type: "block".into(),
+            agent_id: "agent-1".into(),
+            target_entity_type: "ip_address".into(),
+            target_value: "10.0.0.1".into(),
+            reasoning: "confirmed C2".into(),
+        };
+        let _sr = StreamEventsRequest {
+            class_uid: 0,
+            min_severity: 0,
+        };
+        let _en = EventNotification {
+            event_json: "{}".into(),
+            class_uid: 4003,
+            severity: 1,
+        };
+    }
+
+    #[test]
+    fn verdict_response_roundtrip() {
+        use prost::Message;
+
+        let resp = SubmitVerdictResponse {
+            verdict_id: "test-id".into(),
+            accepted: true,
+        };
+        let encoded = resp.encode_to_vec();
+        let decoded = SubmitVerdictResponse::decode(encoded.as_slice()).unwrap();
+        assert_eq!(decoded.verdict_id, "test-id");
+        assert!(decoded.accepted);
     }
 }

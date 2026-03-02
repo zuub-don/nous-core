@@ -3,8 +3,10 @@ use std::net::IpAddr;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
+use crate::action::AgentAction;
 use crate::entity::Entity;
 use crate::severity::Severity;
+use crate::verdict::Verdict;
 
 /// Universal event envelope. Every event flowing through Nous Core
 /// is wrapped in this structure regardless of source or class.
@@ -33,6 +35,10 @@ pub struct NousEvent {
 
     /// The typed event payload.
     pub payload: EventPayload,
+
+    /// Raw source line preserved for audit trail.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub raw: Option<String>,
 }
 
 impl NousEvent {
@@ -55,6 +61,7 @@ impl NousEvent {
             severity,
             source,
             payload,
+            raw: None,
         }
     }
 }
@@ -95,7 +102,14 @@ pub enum EventPayload {
     DnsActivity(DnsActivity),
     NetworkConnection(NetworkConnection),
     DetectionFinding(DetectionFinding),
+    HttpActivity(HttpActivity),
+    TlsActivity(TlsActivity),
+    ProcessActivity(ProcessActivity),
+    Authentication(Authentication),
     SystemLog(SystemLog),
+    AgentAction(AgentAction),
+    Verdict(Verdict),
+    StateSnapshot(StateSnapshot),
     Generic(GenericEvent),
 }
 
@@ -118,19 +132,25 @@ pub struct DnsActivity {
     pub dst: Endpoint,
 }
 
+/// DNS query information.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DnsQuery {
     pub hostname: String,
     pub type_id: u16,
     pub class: u16,
+    /// DNS transaction ID.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub transaction_uid: Option<u16>,
 }
 
+/// DNS response information.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DnsResponse {
     pub rcode_id: u8,
     pub answers: Vec<DnsAnswer>,
 }
 
+/// A single DNS answer record.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DnsAnswer {
     pub type_id: u16,
@@ -159,8 +179,20 @@ pub struct DetectionFinding {
     pub rule: Option<DetectionRule>,
     pub entities: Vec<Entity>,
     pub status: FindingStatus,
+    /// MITRE ATT&CK mapping.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub attack: Option<AttackMapping>,
 }
 
+/// MITRE ATT&CK technique mapping.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AttackMapping {
+    pub technique_id: String,
+    pub technique_name: String,
+    pub tactic: String,
+}
+
+/// Detection rule metadata.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DetectionRule {
     pub uid: String,
@@ -168,6 +200,7 @@ pub struct DetectionRule {
     pub source: String,
 }
 
+/// Finding status.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum FindingStatus {
@@ -177,6 +210,7 @@ pub enum FindingStatus {
     Suppressed,
 }
 
+/// Risk level classification.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum RiskLevel {
@@ -185,6 +219,128 @@ pub enum RiskLevel {
     Medium,
     High,
     Critical,
+}
+
+/// OCSF class_uid: 4002 (HTTP Activity).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct HttpActivity {
+    pub url: String,
+    pub method: String,
+    pub status_code: Option<u16>,
+    pub request_headers: Vec<HttpHeader>,
+    pub response_headers: Vec<HttpHeader>,
+    pub src: Endpoint,
+    pub dst: Endpoint,
+    pub user_agent: Option<String>,
+    pub content_type: Option<String>,
+    pub bytes: Option<u64>,
+}
+
+/// HTTP header key-value pair.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct HttpHeader {
+    pub name: String,
+    pub value: String,
+}
+
+/// OCSF class_uid: 4014 (TLS Activity).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TlsActivity {
+    pub server_name: Option<String>,
+    pub ja3: Option<String>,
+    pub ja3s: Option<String>,
+    pub certificate_chain: Vec<TlsCertificate>,
+    pub tls_version: Option<String>,
+    pub cipher_suite: Option<String>,
+    pub src: Endpoint,
+    pub dst: Endpoint,
+}
+
+/// TLS certificate information.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TlsCertificate {
+    pub subject: String,
+    pub issuer: String,
+    pub serial: Option<String>,
+    pub not_before: Option<String>,
+    pub not_after: Option<String>,
+}
+
+/// OCSF class_uid: 1001 (Process Activity).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProcessActivity {
+    pub pid: Option<u32>,
+    pub ppid: Option<u32>,
+    pub name: String,
+    pub cmd_line: Option<String>,
+    pub user: Option<String>,
+    pub file_path: Option<String>,
+    pub action: ProcessAction,
+}
+
+/// Process lifecycle action.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ProcessAction {
+    Start,
+    Stop,
+    Modify,
+}
+
+/// OCSF class_uid: 3001 (Authentication).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Authentication {
+    pub user: String,
+    pub src: Option<Endpoint>,
+    pub auth_protocol: AuthProtocol,
+    pub activity: AuthActivity,
+    pub status: AuthStatus,
+}
+
+/// Authentication protocol type.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AuthProtocol {
+    Ssh,
+    Kerberos,
+    Ldap,
+    Local,
+    Unknown,
+}
+
+/// Authentication activity type.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AuthActivity {
+    Login,
+    Logout,
+    FailedLogin,
+}
+
+/// Authentication outcome.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AuthStatus {
+    Success,
+    Failure,
+}
+
+/// State snapshot event for periodic state emission.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct StateSnapshot {
+    pub snapshot_time: i64,
+    pub event_count: u64,
+    pub active_findings: u64,
+    pub class_counts: Vec<(u32, u64)>,
+    pub entity_scores: Vec<EntityScore>,
+}
+
+/// Entity score entry in a state snapshot.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EntityScore {
+    pub entity_type: String,
+    pub value: String,
+    pub score: u8,
 }
 
 /// Generic system log entry.
@@ -200,6 +356,9 @@ pub struct Endpoint {
     pub ip: IpAddr,
     pub port: Option<u16>,
     pub hostname: Option<String>,
+    /// MAC address.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mac: Option<String>,
 }
 
 #[cfg(test)]
@@ -226,17 +385,20 @@ mod tests {
                     hostname: "example.com".into(),
                     type_id: 1,
                     class: 1,
+                    transaction_uid: None,
                 },
                 response: None,
                 src: Endpoint {
                     ip: IpAddr::V4(Ipv4Addr::new(192, 168, 1, 100)),
                     port: Some(52341),
                     hostname: None,
+                    mac: None,
                 },
                 dst: Endpoint {
                     ip: IpAddr::V4(Ipv4Addr::new(8, 8, 8, 8)),
                     port: Some(53),
                     hostname: None,
+                    mac: None,
                 },
             }),
         );
@@ -244,6 +406,7 @@ mod tests {
         assert!(!evt.id.is_nil());
         assert!(evt.ingest_time > 0);
         assert_eq!(evt.class_uid, 4003);
+        assert!(evt.raw.is_none());
     }
 
     #[test]
@@ -303,5 +466,315 @@ mod tests {
             }
             _ => panic!("expected Generic payload"),
         }
+    }
+
+    #[test]
+    fn http_activity_serde_roundtrip() {
+        let http = HttpActivity {
+            url: "https://example.com/api".into(),
+            method: "GET".into(),
+            status_code: Some(200),
+            request_headers: vec![HttpHeader {
+                name: "Host".into(),
+                value: "example.com".into(),
+            }],
+            response_headers: vec![],
+            src: Endpoint {
+                ip: IpAddr::V4(Ipv4Addr::new(10, 0, 0, 1)),
+                port: Some(54321),
+                hostname: None,
+                mac: None,
+            },
+            dst: Endpoint {
+                ip: IpAddr::V4(Ipv4Addr::new(93, 184, 216, 34)),
+                port: Some(443),
+                hostname: None,
+                mac: None,
+            },
+            user_agent: Some("curl/8.0".into()),
+            content_type: Some("application/json".into()),
+            bytes: Some(1024),
+        };
+        let evt = NousEvent::new(
+            1_000_000_000,
+            4002,
+            4,
+            Severity::Info,
+            EventSource {
+                adapter: AdapterType::Suricata,
+                product: None,
+                sensor: None,
+                original_id: None,
+            },
+            EventPayload::HttpActivity(http),
+        );
+        let json = serde_json::to_string(&evt).unwrap();
+        let deser: NousEvent = serde_json::from_str(&json).unwrap();
+        assert_eq!(deser.class_uid, 4002);
+        match &deser.payload {
+            EventPayload::HttpActivity(h) => {
+                assert_eq!(h.method, "GET");
+                assert_eq!(h.status_code, Some(200));
+            }
+            _ => panic!("expected HttpActivity"),
+        }
+    }
+
+    #[test]
+    fn tls_activity_serde_roundtrip() {
+        let tls = TlsActivity {
+            server_name: Some("example.com".into()),
+            ja3: Some("abc123".into()),
+            ja3s: Some("def456".into()),
+            certificate_chain: vec![TlsCertificate {
+                subject: "CN=example.com".into(),
+                issuer: "CN=Let's Encrypt".into(),
+                serial: Some("DEADBEEF".into()),
+                not_before: Some("2024-01-01".into()),
+                not_after: Some("2025-01-01".into()),
+            }],
+            tls_version: Some("TLSv1.3".into()),
+            cipher_suite: Some("TLS_AES_256_GCM_SHA384".into()),
+            src: Endpoint {
+                ip: IpAddr::V4(Ipv4Addr::new(10, 0, 0, 1)),
+                port: Some(54321),
+                hostname: None,
+                mac: None,
+            },
+            dst: Endpoint {
+                ip: IpAddr::V4(Ipv4Addr::new(93, 184, 216, 34)),
+                port: Some(443),
+                hostname: None,
+                mac: None,
+            },
+        };
+        let evt = NousEvent::new(
+            1_000_000_000,
+            4014,
+            4,
+            Severity::Info,
+            EventSource {
+                adapter: AdapterType::Suricata,
+                product: None,
+                sensor: None,
+                original_id: None,
+            },
+            EventPayload::TlsActivity(tls),
+        );
+        let json = serde_json::to_string(&evt).unwrap();
+        let deser: NousEvent = serde_json::from_str(&json).unwrap();
+        assert_eq!(deser.class_uid, 4014);
+    }
+
+    #[test]
+    fn process_activity_serde_roundtrip() {
+        let proc_evt = ProcessActivity {
+            pid: Some(1234),
+            ppid: Some(1),
+            name: "malware.exe".into(),
+            cmd_line: Some("/tmp/malware.exe --flag".into()),
+            user: Some("root".into()),
+            file_path: Some("/tmp/malware.exe".into()),
+            action: ProcessAction::Start,
+        };
+        let evt = NousEvent::new(
+            1_000_000_000,
+            1001,
+            1,
+            Severity::High,
+            EventSource {
+                adapter: AdapterType::Journald,
+                product: None,
+                sensor: None,
+                original_id: None,
+            },
+            EventPayload::ProcessActivity(proc_evt),
+        );
+        let json = serde_json::to_string(&evt).unwrap();
+        let deser: NousEvent = serde_json::from_str(&json).unwrap();
+        assert_eq!(deser.class_uid, 1001);
+        match &deser.payload {
+            EventPayload::ProcessActivity(p) => {
+                assert_eq!(p.pid, Some(1234));
+                assert_eq!(p.action, ProcessAction::Start);
+            }
+            _ => panic!("expected ProcessActivity"),
+        }
+    }
+
+    #[test]
+    fn authentication_serde_roundtrip() {
+        let auth = Authentication {
+            user: "admin".into(),
+            src: Some(Endpoint {
+                ip: IpAddr::V4(Ipv4Addr::new(10, 0, 0, 50)),
+                port: None,
+                hostname: None,
+                mac: None,
+            }),
+            auth_protocol: AuthProtocol::Ssh,
+            activity: AuthActivity::FailedLogin,
+            status: AuthStatus::Failure,
+        };
+        let evt = NousEvent::new(
+            1_000_000_000,
+            3001,
+            3,
+            Severity::Medium,
+            EventSource {
+                adapter: AdapterType::Syslog,
+                product: None,
+                sensor: None,
+                original_id: None,
+            },
+            EventPayload::Authentication(auth),
+        );
+        let json = serde_json::to_string(&evt).unwrap();
+        let deser: NousEvent = serde_json::from_str(&json).unwrap();
+        assert_eq!(deser.class_uid, 3001);
+        match &deser.payload {
+            EventPayload::Authentication(a) => {
+                assert_eq!(a.user, "admin");
+                assert_eq!(a.auth_protocol, AuthProtocol::Ssh);
+                assert_eq!(a.activity, AuthActivity::FailedLogin);
+                assert_eq!(a.status, AuthStatus::Failure);
+            }
+            _ => panic!("expected Authentication"),
+        }
+    }
+
+    #[test]
+    fn state_snapshot_serde_roundtrip() {
+        let snap = StateSnapshot {
+            snapshot_time: 1_000_000_000,
+            event_count: 500,
+            active_findings: 3,
+            class_counts: vec![(4003, 200), (2004, 10)],
+            entity_scores: vec![EntityScore {
+                entity_type: "ip_address".into(),
+                value: "10.0.0.1".into(),
+                score: 75,
+            }],
+        };
+        let evt = NousEvent::new(
+            1_000_000_000,
+            0,
+            0,
+            Severity::Info,
+            EventSource {
+                adapter: AdapterType::NousInternal,
+                product: None,
+                sensor: None,
+                original_id: None,
+            },
+            EventPayload::StateSnapshot(snap),
+        );
+        let json = serde_json::to_string(&evt).unwrap();
+        let deser: NousEvent = serde_json::from_str(&json).unwrap();
+        match &deser.payload {
+            EventPayload::StateSnapshot(s) => {
+                assert_eq!(s.event_count, 500);
+                assert_eq!(s.entity_scores.len(), 1);
+            }
+            _ => panic!("expected StateSnapshot"),
+        }
+    }
+
+    #[test]
+    fn process_action_all_variants() {
+        let variants = [
+            ProcessAction::Start,
+            ProcessAction::Stop,
+            ProcessAction::Modify,
+        ];
+        for v in &variants {
+            let json = serde_json::to_string(v).unwrap();
+            let deser: ProcessAction = serde_json::from_str(&json).unwrap();
+            assert_eq!(&deser, v);
+        }
+    }
+
+    #[test]
+    fn auth_enums_all_variants() {
+        // AuthProtocol
+        for v in &[
+            AuthProtocol::Ssh,
+            AuthProtocol::Kerberos,
+            AuthProtocol::Ldap,
+            AuthProtocol::Local,
+            AuthProtocol::Unknown,
+        ] {
+            let json = serde_json::to_string(v).unwrap();
+            let deser: AuthProtocol = serde_json::from_str(&json).unwrap();
+            assert_eq!(&deser, v);
+        }
+        // AuthActivity
+        for v in &[
+            AuthActivity::Login,
+            AuthActivity::Logout,
+            AuthActivity::FailedLogin,
+        ] {
+            let json = serde_json::to_string(v).unwrap();
+            let deser: AuthActivity = serde_json::from_str(&json).unwrap();
+            assert_eq!(&deser, v);
+        }
+        // AuthStatus
+        for v in &[AuthStatus::Success, AuthStatus::Failure] {
+            let json = serde_json::to_string(v).unwrap();
+            let deser: AuthStatus = serde_json::from_str(&json).unwrap();
+            assert_eq!(&deser, v);
+        }
+    }
+
+    #[test]
+    fn raw_field_backward_compat() {
+        // Events serialized without raw should still deserialize
+        let evt = NousEvent::new(
+            1_000_000_000,
+            0,
+            0,
+            Severity::Info,
+            EventSource {
+                adapter: AdapterType::Suricata,
+                product: None,
+                sensor: None,
+                original_id: None,
+            },
+            EventPayload::SystemLog(SystemLog {
+                source_name: "test".into(),
+                message: "test".into(),
+            }),
+        );
+        let json = serde_json::to_string(&evt).unwrap();
+        // raw should not appear in JSON when None
+        assert!(!json.contains("\"raw\""));
+        let deser: NousEvent = serde_json::from_str(&json).unwrap();
+        assert!(deser.raw.is_none());
+    }
+
+    #[test]
+    fn endpoint_mac_backward_compat() {
+        let ep = Endpoint {
+            ip: IpAddr::V4(Ipv4Addr::new(10, 0, 0, 1)),
+            port: Some(80),
+            hostname: None,
+            mac: None,
+        };
+        let json = serde_json::to_string(&ep).unwrap();
+        assert!(!json.contains("\"mac\""));
+        let deser: Endpoint = serde_json::from_str(&json).unwrap();
+        assert!(deser.mac.is_none());
+    }
+
+    #[test]
+    fn attack_mapping_serde_roundtrip() {
+        let mapping = AttackMapping {
+            technique_id: "T1071.001".into(),
+            technique_name: "Application Layer Protocol: Web Protocols".into(),
+            tactic: "command-and-control".into(),
+        };
+        let json = serde_json::to_string(&mapping).unwrap();
+        let deser: AttackMapping = serde_json::from_str(&json).unwrap();
+        assert_eq!(deser.technique_id, "T1071.001");
     }
 }

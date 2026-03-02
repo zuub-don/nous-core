@@ -1,7 +1,7 @@
 //! Suricata EVE JSON adapter.
 //!
 //! Converts Suricata EVE JSON events into normalized Nous Core events.
-//! Handles alert, dns, flow event types; everything else becomes Generic.
+//! Handles alert, dns, flow, http, tls event types; everything else becomes Generic.
 
 use std::net::IpAddr;
 
@@ -11,8 +11,8 @@ use serde_json::Value;
 use nous_core::error::{NousError, Result};
 use nous_core::event::{
     AdapterType, DetectionFinding, DetectionRule, DnsActivity, DnsAnswer, DnsQuery, DnsResponse,
-    Endpoint, EventPayload, EventSource, FindingStatus, GenericEvent, NetworkConnection, NousEvent,
-    RiskLevel,
+    Endpoint, EventPayload, EventSource, FindingStatus, GenericEvent, HttpActivity,
+    NetworkConnection, NousEvent, RiskLevel, TlsActivity, TlsCertificate,
 };
 use nous_core::severity::Severity;
 
@@ -62,7 +62,7 @@ pub fn parse_eve_line(line: &str) -> Result<Option<NousEvent>> {
 
 /// Map Suricata alert priority to Severity.
 ///
-/// Priority 1 → High, 2 → Medium, 3 → Low, 4+ → Info.
+/// Priority 1 -> High, 2 -> Medium, 3 -> Low, 4+ -> Info.
 fn priority_to_severity(priority: u64) -> Severity {
     match priority {
         1 => Severity::High,
@@ -120,6 +120,16 @@ fn parse_port(v: &Value, field: &str) -> Option<u16> {
     v[field].as_u64().map(|p| p as u16)
 }
 
+/// Build an Endpoint from the common src/dst fields.
+fn parse_endpoint(v: &Value, ip_field: &str, port_field: &str) -> Endpoint {
+    Endpoint {
+        ip: parse_ip(v, ip_field),
+        port: parse_port(v, port_field),
+        hostname: None,
+        mac: None,
+    }
+}
+
 /// Build an EventSource for Suricata events.
 fn suricata_source() -> EventSource {
     EventSource {
@@ -142,6 +152,8 @@ fn parse_eve_value(v: &Value) -> Result<Option<NousEvent>> {
         "alert" => parse_alert(v, time).map(Some),
         "dns" => parse_dns(v, time).map(Some),
         "flow" => parse_flow(v, time).map(Some),
+        "http" => parse_http(v, time).map(Some),
+        "tls" => parse_tls(v, time).map(Some),
         other => Ok(Some(NousEvent::new(
             time,
             0,
@@ -182,6 +194,7 @@ fn parse_alert(v: &Value, time: i64) -> Result<NousEvent> {
         rule: Some(rule),
         entities: Vec::new(),
         status: FindingStatus::New,
+        attack: None,
     };
 
     Ok(NousEvent::new(
@@ -201,6 +214,7 @@ fn parse_dns(v: &Value, time: i64) -> Result<NousEvent> {
     let rrname = dns["rrname"].as_str().unwrap_or("").to_string();
     let rrtype = dns["rrtype"].as_str().unwrap_or("A");
     let type_id = dns_type_to_id(rrtype);
+    let transaction_uid = dns["id"].as_u64().map(|id| id as u16);
 
     let answers = if let Some(arr) = dns["answers"].as_array() {
         arr.iter()
@@ -240,18 +254,11 @@ fn parse_dns(v: &Value, time: i64) -> Result<NousEvent> {
         hostname: rrname,
         type_id,
         class: 1, // IN class
+        transaction_uid,
     };
 
-    let src = Endpoint {
-        ip: parse_ip(v, "src_ip"),
-        port: parse_port(v, "src_port"),
-        hostname: None,
-    };
-    let dst = Endpoint {
-        ip: parse_ip(v, "dest_ip"),
-        port: parse_port(v, "dest_port"),
-        hostname: None,
-    };
+    let src = parse_endpoint(v, "src_ip", "src_port");
+    let dst = parse_endpoint(v, "dest_ip", "dest_port");
 
     let dns_activity = DnsActivity {
         activity_id,
@@ -285,20 +292,10 @@ fn parse_flow(v: &Value, time: i64) -> Result<NousEvent> {
 
     let bytes_out = flow["bytes_toserver"].as_u64();
     let bytes_in = flow["bytes_toclient"].as_u64();
-
-    // Duration: Suricata provides start/end timestamps or age
     let duration_us = flow["age"].as_u64().map(|s| s * 1_000_000);
 
-    let src = Endpoint {
-        ip: parse_ip(v, "src_ip"),
-        port: parse_port(v, "src_port"),
-        hostname: None,
-    };
-    let dst = Endpoint {
-        ip: parse_ip(v, "dest_ip"),
-        port: parse_port(v, "dest_port"),
-        hostname: None,
-    };
+    let src = parse_endpoint(v, "src_ip", "src_port");
+    let dst = parse_endpoint(v, "dest_ip", "dest_port");
 
     let conn = NetworkConnection {
         src,
@@ -316,6 +313,104 @@ fn parse_flow(v: &Value, time: i64) -> Result<NousEvent> {
         Severity::Info,
         suricata_source(),
         EventPayload::NetworkConnection(conn),
+    ))
+}
+
+/// Parse a Suricata HTTP event into an HttpActivity.
+fn parse_http(v: &Value, time: i64) -> Result<NousEvent> {
+    let http = &v["http"];
+
+    let hostname = http["hostname"].as_str().unwrap_or("");
+    let url_path = http["url"].as_str().unwrap_or("/");
+    let url = if hostname.is_empty() {
+        url_path.to_string()
+    } else {
+        format!("{hostname}{url_path}")
+    };
+
+    let method = http["http_method"].as_str().unwrap_or("GET").to_string();
+    let status_code = http["status"].as_u64().map(|s| s as u16);
+    let user_agent = http["http_user_agent"].as_str().map(String::from);
+    let content_type = http["http_content_type"].as_str().map(String::from);
+    let bytes = http["length"].as_u64();
+
+    let src = parse_endpoint(v, "src_ip", "src_port");
+    let dst = parse_endpoint(v, "dest_ip", "dest_port");
+
+    let activity = HttpActivity {
+        url,
+        method,
+        status_code,
+        request_headers: Vec::new(),
+        response_headers: Vec::new(),
+        src,
+        dst,
+        user_agent,
+        content_type,
+        bytes,
+    };
+
+    Ok(NousEvent::new(
+        time,
+        4002,
+        4,
+        Severity::Info,
+        suricata_source(),
+        EventPayload::HttpActivity(activity),
+    ))
+}
+
+/// Parse a Suricata TLS event into a TlsActivity.
+fn parse_tls(v: &Value, time: i64) -> Result<NousEvent> {
+    let tls = &v["tls"];
+
+    let server_name = tls["sni"].as_str().map(String::from);
+    let ja3 = tls["ja3"]
+        .as_object()
+        .and_then(|j| j["hash"].as_str())
+        .map(String::from);
+    let ja3s = tls["ja3s"]
+        .as_object()
+        .and_then(|j| j["hash"].as_str())
+        .map(String::from);
+    let tls_version = tls["version"].as_str().map(String::from);
+    let cipher_suite = tls["cipher"].as_str().map(String::from);
+
+    // Parse certificate if present
+    let mut certificate_chain = Vec::new();
+    let subject = tls["subject"].as_str().unwrap_or("");
+    let issuerdn = tls["issuerdn"].as_str().unwrap_or("");
+    if !subject.is_empty() || !issuerdn.is_empty() {
+        certificate_chain.push(TlsCertificate {
+            subject: subject.to_string(),
+            issuer: issuerdn.to_string(),
+            serial: tls["serial"].as_str().map(String::from),
+            not_before: tls["notbefore"].as_str().map(String::from),
+            not_after: tls["notafter"].as_str().map(String::from),
+        });
+    }
+
+    let src = parse_endpoint(v, "src_ip", "src_port");
+    let dst = parse_endpoint(v, "dest_ip", "dest_port");
+
+    let activity = TlsActivity {
+        server_name,
+        ja3,
+        ja3s,
+        certificate_chain,
+        tls_version,
+        cipher_suite,
+        src,
+        dst,
+    };
+
+    Ok(NousEvent::new(
+        time,
+        4014,
+        4,
+        Severity::Info,
+        suricata_source(),
+        EventPayload::TlsActivity(activity),
     ))
 }
 
@@ -449,6 +544,7 @@ mod tests {
                 assert_eq!(f.title, "ET MALWARE Known Bad C2 Channel");
                 assert_eq!(f.risk_level, RiskLevel::High);
                 assert_eq!(f.risk_score, 80);
+                assert!(f.attack.is_none());
                 let rule = f.rule.as_ref().unwrap();
                 assert_eq!(rule.uid, "2024001");
             }
@@ -494,6 +590,18 @@ mod tests {
     }
 
     #[test]
+    fn dns_transaction_uid() {
+        let adapter = SuricataAdapter::new();
+        let evt = adapter.parse_line(&make_dns_query_json()).unwrap().unwrap();
+        match &evt.payload {
+            EventPayload::DnsActivity(d) => {
+                assert_eq!(d.query.transaction_uid, Some(12345));
+            }
+            _ => panic!("expected DnsActivity"),
+        }
+    }
+
+    #[test]
     fn parse_flow_event() {
         let adapter = SuricataAdapter::new();
         let evt = adapter.parse_line(&make_flow_json()).unwrap().unwrap();
@@ -507,6 +615,130 @@ mod tests {
                 assert_eq!(c.dst.port, Some(443));
             }
             _ => panic!("expected NetworkConnection"),
+        }
+    }
+
+    #[test]
+    fn parse_http_event() {
+        let json = serde_json::json!({
+            "timestamp": "2024-01-15T10:30:00.000000+0000",
+            "event_type": "http",
+            "src_ip": "10.0.0.1",
+            "src_port": 54321,
+            "dest_ip": "93.184.216.34",
+            "dest_port": 80,
+            "http": {
+                "hostname": "example.com",
+                "url": "/api/data",
+                "http_method": "POST",
+                "status": 200,
+                "http_user_agent": "curl/8.0",
+                "http_content_type": "application/json",
+                "length": 4096
+            }
+        })
+        .to_string();
+
+        let adapter = SuricataAdapter::new();
+        let evt = adapter.parse_line(&json).unwrap().unwrap();
+        assert_eq!(evt.class_uid, 4002);
+        match &evt.payload {
+            EventPayload::HttpActivity(h) => {
+                assert_eq!(h.url, "example.com/api/data");
+                assert_eq!(h.method, "POST");
+                assert_eq!(h.status_code, Some(200));
+                assert_eq!(h.user_agent.as_deref(), Some("curl/8.0"));
+                assert_eq!(h.bytes, Some(4096));
+            }
+            _ => panic!("expected HttpActivity"),
+        }
+    }
+
+    #[test]
+    fn parse_http_minimal() {
+        let json = serde_json::json!({
+            "timestamp": "2024-01-15T10:30:00.000000+0000",
+            "event_type": "http",
+            "src_ip": "10.0.0.1",
+            "dest_ip": "10.0.0.2",
+            "http": {}
+        })
+        .to_string();
+
+        let adapter = SuricataAdapter::new();
+        let evt = adapter.parse_line(&json).unwrap().unwrap();
+        assert_eq!(evt.class_uid, 4002);
+        match &evt.payload {
+            EventPayload::HttpActivity(h) => {
+                assert_eq!(h.method, "GET");
+                assert!(h.status_code.is_none());
+            }
+            _ => panic!("expected HttpActivity"),
+        }
+    }
+
+    #[test]
+    fn parse_tls_event() {
+        let json = serde_json::json!({
+            "timestamp": "2024-01-15T10:30:00.000000+0000",
+            "event_type": "tls",
+            "src_ip": "10.0.0.1",
+            "src_port": 54321,
+            "dest_ip": "93.184.216.34",
+            "dest_port": 443,
+            "tls": {
+                "sni": "example.com",
+                "version": "TLSv1.3",
+                "cipher": "TLS_AES_256_GCM_SHA384",
+                "subject": "CN=example.com",
+                "issuerdn": "CN=Let's Encrypt Authority X3",
+                "serial": "03:AB:CD",
+                "notbefore": "2024-01-01T00:00:00",
+                "notafter": "2025-01-01T00:00:00",
+                "ja3": { "hash": "abc123def456" },
+                "ja3s": { "hash": "789xyz" }
+            }
+        })
+        .to_string();
+
+        let adapter = SuricataAdapter::new();
+        let evt = adapter.parse_line(&json).unwrap().unwrap();
+        assert_eq!(evt.class_uid, 4014);
+        match &evt.payload {
+            EventPayload::TlsActivity(t) => {
+                assert_eq!(t.server_name.as_deref(), Some("example.com"));
+                assert_eq!(t.ja3.as_deref(), Some("abc123def456"));
+                assert_eq!(t.ja3s.as_deref(), Some("789xyz"));
+                assert_eq!(t.tls_version.as_deref(), Some("TLSv1.3"));
+                assert_eq!(t.certificate_chain.len(), 1);
+                assert_eq!(t.certificate_chain[0].subject, "CN=example.com");
+            }
+            _ => panic!("expected TlsActivity"),
+        }
+    }
+
+    #[test]
+    fn parse_tls_no_cert() {
+        let json = serde_json::json!({
+            "timestamp": "2024-01-15T10:30:00.000000+0000",
+            "event_type": "tls",
+            "src_ip": "10.0.0.1",
+            "dest_ip": "10.0.0.2",
+            "tls": {
+                "sni": "api.example.com",
+                "version": "TLSv1.2"
+            }
+        })
+        .to_string();
+
+        let adapter = SuricataAdapter::new();
+        let evt = adapter.parse_line(&json).unwrap().unwrap();
+        match &evt.payload {
+            EventPayload::TlsActivity(t) => {
+                assert!(t.certificate_chain.is_empty());
+                assert!(t.ja3.is_none());
+            }
+            _ => panic!("expected TlsActivity"),
         }
     }
 
@@ -597,5 +829,41 @@ mod tests {
         let deser: NousEvent = serde_json::from_str(&json).unwrap();
         assert_eq!(deser.class_uid, evt.class_uid);
         assert_eq!(deser.severity, evt.severity);
+    }
+
+    #[test]
+    fn http_serde_roundtrip() {
+        let json = serde_json::json!({
+            "timestamp": "2024-01-15T10:30:00.000000+0000",
+            "event_type": "http",
+            "src_ip": "10.0.0.1",
+            "dest_ip": "10.0.0.2",
+            "http": { "hostname": "test.com", "url": "/", "http_method": "GET" }
+        })
+        .to_string();
+
+        let adapter = SuricataAdapter::new();
+        let evt = adapter.parse_line(&json).unwrap().unwrap();
+        let serialized = serde_json::to_string(&evt).unwrap();
+        let deser: NousEvent = serde_json::from_str(&serialized).unwrap();
+        assert_eq!(deser.class_uid, 4002);
+    }
+
+    #[test]
+    fn tls_serde_roundtrip() {
+        let json = serde_json::json!({
+            "timestamp": "2024-01-15T10:30:00.000000+0000",
+            "event_type": "tls",
+            "src_ip": "10.0.0.1",
+            "dest_ip": "10.0.0.2",
+            "tls": { "sni": "test.com", "version": "TLSv1.3" }
+        })
+        .to_string();
+
+        let adapter = SuricataAdapter::new();
+        let evt = adapter.parse_line(&json).unwrap().unwrap();
+        let serialized = serde_json::to_string(&evt).unwrap();
+        let deser: NousEvent = serde_json::from_str(&serialized).unwrap();
+        assert_eq!(deser.class_uid, 4014);
     }
 }

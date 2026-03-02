@@ -6,10 +6,13 @@
 use nous_core::error::Result;
 use nous_core::event::NousEvent;
 
+pub mod journald;
 pub mod suricata;
+pub mod syslog_adapter;
+pub mod zeek;
 
 /// Trait implemented by all ingestion adapters.
-pub trait Adapter {
+pub trait Adapter: Send + Sync {
     /// Human-readable adapter name (e.g., "suricata").
     fn name(&self) -> &'static str;
 

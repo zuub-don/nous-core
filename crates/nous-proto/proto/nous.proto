@@ -15,6 +15,15 @@ service NousService {
 
   // Generate a context window from current semantic state.
   rpc Observe (ObserveRequest) returns (ObserveResponse);
+
+  // Submit a triage verdict for a finding.
+  rpc SubmitVerdict (SubmitVerdictRequest) returns (SubmitVerdictResponse);
+
+  // Submit a response action.
+  rpc SubmitAction (SubmitActionRequest) returns (SubmitActionResponse);
+
+  // Stream events in real-time.
+  rpc StreamEvents (StreamEventsRequest) returns (stream EventNotification);
 }
 
 message GetStatusRequest {}
@@ -74,4 +83,60 @@ message ObserveRequest {
 message ObserveResponse {
   // The context window as a JSON string.
   string context_window = 1;
+}
+
+message SubmitVerdictRequest {
+  // Finding ID (UUID string).
+  string finding_id = 1;
+  // Verdict: "true_positive", "false_positive", "benign", "needs_investigation".
+  string verdict = 2;
+  // Agent that submitted the verdict.
+  string agent_id = 3;
+  // Reasoning for the verdict.
+  string reasoning = 4;
+  // Confidence (0.0–1.0).
+  double confidence = 5;
+}
+
+message SubmitVerdictResponse {
+  // Verdict ID (UUID string).
+  string verdict_id = 1;
+  // Whether the verdict was accepted.
+  bool accepted = 2;
+}
+
+message SubmitActionRequest {
+  // Action type: "escalate", "suppress", "isolate", "block", "allowlist".
+  string action_type = 1;
+  // Agent that submitted the action.
+  string agent_id = 2;
+  // Target entity type (e.g., "ip_address").
+  string target_entity_type = 3;
+  // Target entity value.
+  string target_value = 4;
+  // Reasoning for the action.
+  string reasoning = 5;
+}
+
+message SubmitActionResponse {
+  // Action ID (UUID string).
+  string action_id = 1;
+  // Whether the action was accepted.
+  bool accepted = 2;
+}
+
+message StreamEventsRequest {
+  // Filter by OCSF class_uid (0 = all).
+  uint32 class_uid = 1;
+  // Filter by minimum severity (0 = all).
+  uint32 min_severity = 2;
+}
+
+message EventNotification {
+  // Event serialized as JSON string.
+  string event_json = 1;
+  // OCSF class_uid for quick filtering.
+  uint32 class_uid = 2;
+  // Severity level (0-5).
+  uint32 severity = 3;
 }

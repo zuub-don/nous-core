@@ -9,6 +9,10 @@ pub struct Config {
     pub grpc_port: u16,
     /// Maximum number of recent events to buffer.
     pub buffer_size: usize,
+    /// Adapter name: "suricata", "zeek", "syslog", "journald", or "auto".
+    pub adapter: String,
+    /// PostgreSQL database URL (optional, requires `persistence` feature).
+    pub db_url: Option<String>,
 }
 
 impl Default for Config {
@@ -17,6 +21,8 @@ impl Default for Config {
             input: "-".into(),
             grpc_port: 50051,
             buffer_size: 1000,
+            adapter: "auto".into(),
+            db_url: None,
         }
     }
 }
@@ -28,6 +34,8 @@ impl Config {
     /// - `--input <path|->`: event source (default: stdin)
     /// - `--grpc-port <port>`: gRPC listen port (default: 50051)
     /// - `--buffer-size <n>`: event ring buffer capacity (default: 1000)
+    /// - `--adapter <name>`: adapter to use (default: auto)
+    /// - `--db-url <url>`: PostgreSQL connection URL
     pub fn from_args(args: &[String]) -> Result<Self, String> {
         let mut config = Config::default();
         let mut i = 0;
@@ -50,6 +58,14 @@ impl Config {
                         .parse()
                         .map_err(|_| format!("invalid buffer size: {val}"))?;
                 }
+                "--adapter" => {
+                    i += 1;
+                    config.adapter = args.get(i).ok_or("--adapter requires a value")?.clone();
+                }
+                "--db-url" => {
+                    i += 1;
+                    config.db_url = Some(args.get(i).ok_or("--db-url requires a value")?.clone());
+                }
                 other => {
                     return Err(format!("unknown argument: {other}"));
                 }
@@ -71,6 +87,8 @@ mod tests {
         assert_eq!(config.input, "-");
         assert_eq!(config.grpc_port, 50051);
         assert_eq!(config.buffer_size, 1000);
+        assert_eq!(config.adapter, "auto");
+        assert!(config.db_url.is_none());
     }
 
     #[test]
@@ -82,6 +100,8 @@ mod tests {
             "9090",
             "--buffer-size",
             "5000",
+            "--adapter",
+            "suricata",
         ]
         .into_iter()
         .map(String::from)
@@ -91,6 +111,7 @@ mod tests {
         assert_eq!(config.input, "/var/log/suricata/eve.json");
         assert_eq!(config.grpc_port, 9090);
         assert_eq!(config.buffer_size, 5000);
+        assert_eq!(config.adapter, "suricata");
     }
 
     #[test]
@@ -119,5 +140,25 @@ mod tests {
     fn missing_value_returns_error() {
         let args: Vec<String> = vec!["--input"].into_iter().map(String::from).collect();
         assert!(Config::from_args(&args).is_err());
+    }
+
+    #[test]
+    fn parse_adapter_flag() {
+        let args: Vec<String> = vec!["--adapter", "zeek"]
+            .into_iter()
+            .map(String::from)
+            .collect();
+        let config = Config::from_args(&args).unwrap();
+        assert_eq!(config.adapter, "zeek");
+    }
+
+    #[test]
+    fn parse_db_url_flag() {
+        let args: Vec<String> = vec!["--db-url", "postgres://localhost/nous"]
+            .into_iter()
+            .map(String::from)
+            .collect();
+        let config = Config::from_args(&args).unwrap();
+        assert_eq!(config.db_url.as_deref(), Some("postgres://localhost/nous"));
     }
 }
